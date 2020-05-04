@@ -1,0 +1,100 @@
+from __future__ import print_function
+import pickle
+import os.path
+from googleapiclient.discovery import build
+from google_auth_oauthlib.flow import InstalledAppFlow
+from google.auth.transport.requests import Request
+import pandas as pd
+import datetime
+from datetime import datetime
+from sqlalchemy import create_engine
+import snowflake.connector as sf
+import snowflake.connector
+import numpy as np
+from slacker import Slacker
+import sys
+sys.path.append('C:/Users/Python')
+import SF_CRED
+user=SF_CRED.SF_USER
+pwd=SF_CRED.SF_PASSWORD
+db=SF_CRED.DB
+schema=SF_CRED.FIVETRAN_SCHEMA
+warehouse=SF_CRED.BI_WH
+role=SF_CRED.ROLE
+import requests 
+from bs4 import BeautifulSoup
+import pandas as pd
+base_url = "https://www.cars24.com/blog/top-stories/"
+r = requests.get(base_url)
+c = r.content
+#print(r.text[:500])
+soup = BeautifulSoup(r.text, 'html.parser')
+#print(soup)
+#hi =soup.find(class_='top-stories').find(class_="name").text
+#value1 =soup.find(class_='top-stories').find(class_="expert-story-each-data-title").find("a").get("href")
+value1 = []
+for link in soup.findAll(class_='expert-story-each-data-title'):
+    value2 = link.find('a').get("href")
+    value1.append(value2)
+#print(value1)
+length = len(value1)
+for i in range(length):
+    sec_url = value1[i]
+    r = requests.get(sec_url)
+    c = r.content
+    #print(r.text[:500])
+    soup = BeautifulSoup(r.text, 'html.parser')
+    #print(sec)
+    value = soup.find(class_='story-author-detail-mob d-md-none').find(class_="name").find("a").text
+    #print(value)
+    ls=[]
+    ls.append([value1[i],value])
+    #print(ls)
+    Blog = pd.DataFrame(ls)
+    def team(Blog):
+        if (str(Blog[1]).strip()).lower() == '******* bhardwaj':
+            val = 'BRAND'
+        elif (str(Blog[1]).strip()).lower() == '*********** salman':
+            val = 'BRAND'
+        elif (str(Blog[1]).strip()).lower() == '***** saxena':
+            val = 'BRAND'
+        elif (str(Blog[1]).strip()).lower() == '***** jones':
+            val = 'SEO'
+        elif (str(Blog[1]).strip()).lower() == 'team cars24':
+            val = 'SEO'
+        else:
+            val = 'OTHER-Guest/Extenal'
+        return val
+    Blog['PUBLISHED_DATE'] = datetime.today().strftime('%Y-%m-%d')
+    Blog['TEAM'] = Blog.apply(team,axis =1)
+    blog = Blog.rename(columns={0:'BLOG_URL',1:'EDITOR',2:'PUBLISHED_DATE',3:'TEAM'})
+    blog = blog[['BLOG_URL','PUBLISHED_DATE','EDITOR','TEAM']]
+    #print(blog)
+    conn = snowflake.connector.connect(user='******',password='*******',account='am62076.ap-southeast-2',role='BI_WRITE',schema='FIVETRAN_BI',warehouse=warehouse,database='PC_STITCH_DB')
+    sql = 'select * from PC_STITCH_DB.FIVETRAN1_BI.BLOG_POST_CARS24'
+    data = pd.read_sql(sql,con=conn)
+
+    API_TOKEN = 'xoxp-5133929532-892337144610-962587570487-***********************' # I load in my api token from an environment variable
+    #print(value1[i])
+
+    df1 = data[data['BLOG_URL'].str.contains(value1[i])]
+    #print(df1)
+    data2 = pd.DataFrame(columns=['BLOG_URL','PUBLISHED_DATE','EDITOR','TEAM'])
+    if df1.empty == True:
+        data1 = blog
+        message = 'NEW BLOG POST - CARS24\n' +'DATE : ' + blog['PUBLISHED_DATE'] + '\n' + 'TEAM : '+ blog['TEAM'] + '\n' + 'EDITOR :'+ blog['EDITOR'] + '\n' + 'Link : '+ blog['BLOG_URL']
+        slack = Slacker(API_TOKEN)
+        channel = '#testchannel'
+        slack.chat.post_message(channel, message, parse='full')
+    else:
+        data1=data2
+    print(data1)
+    engine =create_engine("snowflake://"+user+":"+pwd+"@am62076.ap-southeast-2/"+db+"/"+schema+"?warehouse="+warehouse+"?role="+role)
+    connection = engine.connect()
+    try:
+        for k in range(0,len(data1),10000):
+            temp_df = data1[k:k+9999]
+            temp_df.to_sql(name='BLOG_POST_CARS24',con=connection, if_exists='append', index=False)
+            status = 'success'
+    except Exception as sqlError:
+        status = 'fail'
